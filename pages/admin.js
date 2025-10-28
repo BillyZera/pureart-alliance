@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
 export default function AdminPage() {
@@ -8,15 +8,31 @@ export default function AdminPage() {
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [message, setMessage] = useState('');
 
+  // Whenever handle changes, build the slug from it
+  useEffect(() => {
+    // rule: lowercase, trim spaces, replace spaces with nothing
+    // you could also replace spaces with '-' if you prefer
+    const cleaned = handle
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '');      // remove spaces completely
+    setSlug(cleaned);
+  }, [handle]);
+
   async function addArtist(e) {
     e.preventDefault();
     setMessage('Saving...');
 
+    if (!slug) {
+      setMessage('Error: handle/slug is empty or invalid');
+      return;
+    }
+
     const { error } = await supabase.from('artists').insert([
       {
         display_name: displayName,
-        handle,
-        slug,
+        handle: handle,
+        slug: slug,
         website_url: websiteUrl,
         status: 'active'
       }
@@ -29,8 +45,8 @@ export default function AdminPage() {
       setMessage('Artist added!');
       setDisplayName('');
       setHandle('');
-      setSlug('');
       setWebsiteUrl('');
+      // slug will auto-clear because handle cleared
     }
   }
 
@@ -47,9 +63,11 @@ export default function AdminPage() {
         We’ll lock this down later so the public can’t see it.
       </p>
 
-      <form onSubmit={addArtist} style={{display:'grid', gap:'12px', marginTop:'24px'}}>
+      <form onSubmit={addArtist} style={{display:'grid', gap:'16px', marginTop:'24px'}}>
+
+        {/* DISPLAY NAME */}
         <label>
-          Display Name<br />
+          Display Name (can have spaces)<br />
           <input
             style={{width:'100%', padding:'8px'}}
             value={displayName}
@@ -58,26 +76,33 @@ export default function AdminPage() {
           />
         </label>
 
+        {/* HANDLE */}
         <label>
-          Handle (username)<br />
+          Username (no spaces). This becomes their public ID and URL.<br />
           <input
             style={{width:'100%', padding:'8px'}}
             value={handle}
             onChange={e => setHandle(e.target.value)}
+            placeholder="example: alexpainter"
             required
           />
         </label>
 
-        <label>
-          Slug (no spaces, e.g. alexpainter)<br />
-          <input
-            style={{width:'100%', padding:'8px'}}
-            value={slug}
-            onChange={e => setSlug(e.target.value)}
-            required
-          />
-        </label>
+        {/* URL PREVIEW */}
+        <div style={{
+          fontSize:'13px',
+          background:'#f5f5f5',
+          border:'1px solid #ddd',
+          borderRadius:'6px',
+          padding:'8px'
+        }}>
+          Profile URL will be:<br />
+          <code>
+            https://pureart-alliance.vercel.app/artist/{slug || 'your-handle-here'}
+          </code>
+        </div>
 
+        {/* WEBSITE */}
         <label>
           Website URL (optional)<br />
           <input
