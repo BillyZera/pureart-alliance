@@ -57,7 +57,8 @@ export default function LoginPage() {
         return;
       }
 
-      setMessage('Signed in!');
+      // Logged in successfully
+      window.location.href = '/directory';
       return;
     }
   }
