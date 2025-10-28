@@ -5,7 +5,6 @@ export default function HeaderUser() {
   const [userEmail, setUserEmail] = useState(null);
 
   useEffect(() => {
-    // get current session/user on mount
     async function loadUser() {
       const { data } = await supabase.auth.getUser();
       if (data?.user?.email) {
