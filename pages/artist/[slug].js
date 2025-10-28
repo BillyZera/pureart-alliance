@@ -1,3 +1,4 @@
+import HeaderUser from '../components/HeaderUser';
 import { supabase } from '../../lib/supabaseClient';
 
 export async function getServerSideProps({ params }) {

@@ -1,3 +1,4 @@
+import HeaderUser from '../components/HeaderUser';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
 

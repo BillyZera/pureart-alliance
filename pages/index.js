@@ -1,3 +1,4 @@
+import HeaderUser from '../components/HeaderUser';
 export default function Home() {
   return (
     <main style={{maxWidth: 800, margin: '40px auto', padding: '0 16px', fontFamily: 'system-ui, sans-serif'}}>
