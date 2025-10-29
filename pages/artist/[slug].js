@@ -1,21 +1,109 @@
+import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
+// 1. Get artist data on the server so the page can load even without JS
 export async function getServerSideProps({ params }) {
-  const { data: artist, error } = await supabase
+  // Load the artist row
+  const { data: artist, error: artistError } = await supabase
     .from('artists')
-    .select('*')
+    .select('display_name, handle, slug, status, website_url')
     .eq('slug', params.slug)
     .single();
 
-  if (error || !artist) return { notFound: true };
-  return { props: { artist } };
+  if (artistError || !artist) {
+    return { notFound: true };
+  }
+
+  // Load current votes for this artist
+  const { data: votes, error: votesError } = await supabase
+    .from('votes')
+    .select('vote')
+    .eq('artist_slug', params.slug);
+
+  // Gracefully handle if votes table is empty/new
+  const upCount = votes && !votesError
+    ? votes.filter(v => v.vote === 'up').length
+    : 0;
+  const downCount = votes && !votesError
+    ? votes.filter(v => v.vote === 'down').length
+    : 0;
+
+  const total = upCount + downCount;
+  const initialScore = total ? Math.round((upCount / total) * 100) : 100;
+
+  return {
+    props: {
+      artist,
+      initialUp: upCount,
+      initialDown: downCount,
+      initialScore,
+    },
+  };
 }
 
-export default function ArtistPage({ artist }) {
-  const up = Number(artist.up_weighted || 0);
-  const down = Number(artist.down_weighted || 0);
-  const total = up + down;
-  const score = total ? Math.round((up / total) * 100) : 100;
+// 2. Page component (runs in the browser)
+export default function ArtistPage({ artist, initialUp, initialDown, initialScore }) {
+  const [userEmail, setUserEmail] = useState(null);
+  const [userId, setUserId] = useState(null);
+
+  const [up, setUp] = useState(initialUp);
+  const [down, setDown] = useState(initialDown);
+  const [score, setScore] = useState(initialScore);
+
+  const [working, setWorking] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // When page mounts, ask Supabase who is signed in
+  useEffect(() => {
+    async function loadUser() {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) {
+        setUserEmail(data.user.email || null);
+        setUserId(data.user.id || null);
+      }
+    }
+    loadUser();
+  }, []);
+
+  // Handle clicking 👍 or 👎
+  async function sendVote(voteType) {
+    if (!userId) {
+      setErrorMsg('You must be signed in to vote.');
+      return;
+    }
+
+    setWorking(true);
+    setErrorMsg('');
+
+    try {
+      const res = await fetch('/api/vote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          artist_slug: artist.slug,
+          vote: voteType, // 'up' or 'down'
+          voter_id: userId,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErrorMsg(data.error || 'Vote failed');
+      } else {
+        // Update UI with fresh numbers from the server response
+        setUp(data.up);
+        setDown(data.down);
+        setScore(data.score);
+      }
+    } catch (err) {
+      setErrorMsg('Network error');
+    } finally {
+      setWorking(false);
+    }
+  }
 
   return (
     <main
@@ -29,6 +117,40 @@ export default function ArtistPage({ artist }) {
       <p>
         <a href="/directory">← Back to directory</a>
       </p>
+
+      {/* login status box */}
+      {userEmail ? (
+        <p
+          style={{
+            background: '#f5f5f5',
+            border: '1px solid #ddd',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '14px',
+            color: '#333',
+            marginBottom: '16px',
+          }}
+        >
+          Signed in as <b>{userEmail}</b>
+        </p>
+      ) : (
+        <p
+          style={{
+            background: '#fffbea',
+            border: '1px solid #ddd',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '14px',
+            color: '#555',
+            marginBottom: '16px',
+          }}
+        >
+          Not signed in.{' '}
+          <a href="/login" style={{ color: '#0066cc' }}>
+            Log in →
+          </a>
+        </p>
+      )}
 
       <h1>
         {artist.display_name}{' '}
@@ -56,6 +178,50 @@ export default function ArtistPage({ artist }) {
         </p>
       )}
 
+      {/* voting buttons */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '12px',
+          marginTop: '16px',
+          marginBottom: '16px',
+        }}
+      >
+        <button
+          onClick={() => sendVote('up')}
+          disabled={working || !userId}
+          style={{
+            padding: '10px 14px',
+            borderRadius: '6px',
+            border: '1px solid #0a0',
+            background: '#eaffea',
+            cursor: working || !userId ? 'not-allowed' : 'pointer',
+            fontWeight: 'bold',
+          }}
+        >
+          👍 This artist is genuine
+        </button>
+
+        <button
+          onClick={() => sendVote('down')}
+          disabled={working || !userId}
+          style={{
+            padding: '10px 14px',
+            borderRadius: '6px',
+            border: '1px solid #a00',
+            background: '#ffeeee',
+            cursor: working || !userId ? 'not-allowed' : 'pointer',
+            fontWeight: 'bold',
+          }}
+        >
+          👎 I suspect AI here
+        </button>
+      </div>
+
+      {errorMsg && (
+        <p style={{ color: 'red', fontWeight: 'bold' }}>{errorMsg}</p>
+      )}
+
       <hr style={{ margin: '24px 0' }} />
 
       <h2>Your PureArt Badge</h2>
@@ -67,9 +233,8 @@ export default function ArtistPage({ artist }) {
         }}
       >
         This live badge shows your current status in PureArt Alliance.
-        If your status ever changes (for example, goes under review or
-        is revoked), the colour and text here will update everywhere
-        you’ve embedded it.
+        If your status ever changes (for example, goes under review or is revoked),
+        the colour and text here will update everywhere you’ve embedded it.
       </p>
 
       <div
@@ -114,8 +279,7 @@ export default function ArtistPage({ artist }) {
           marginTop: '8px',
         }}
       >
-        Tip: paste that into your website, portfolio, bio, Linktree,
-        etc.
+        Tip: paste that into your website, portfolio, bio, Linktree, etc.
       </p>
     </main>
   );
