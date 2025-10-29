@@ -31,7 +31,6 @@ export async function getServerSideProps({ params }) {
 // -------------------------
 export default function ArtistPage({ artist, up, down, score }) {
   const [user, setUser] = useState(null);
-
   const [counts, setCounts] = useState({ up, down, score });
 
   const [showForm, setShowForm] = useState(false);
@@ -39,27 +38,30 @@ export default function ArtistPage({ artist, up, down, score }) {
   const [files, setFiles] = useState([]);
 
   const [accusations, setAccusations] = useState([]);
-
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // load logged-in user + accusations thread
+  // load user + accusations (excluding soft-deleted)
+  async function loadThread() {
+    const { data: accs } = await supabase
+      .from('accusations')
+      .select('*')
+      .eq('artist_slug', artist.slug)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+
+    setAccusations(accs || []);
+  }
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (data?.user) setUser(data.user);
-
-      const { data: accs } = await supabase
-        .from('accusations')
-        .select('*')
-        .eq('artist_slug', artist.slug)
-        .order('created_at', { ascending: false });
-
-      setAccusations(accs || []);
+      await loadThread();
     })();
   }, [artist.slug]);
 
-  // handle "This artist is genuine" upvote
+  // upvote (positive trust)
   async function sendUpvote() {
     if (!user) return setErrorMsg('Please sign in first.');
     setErrorMsg('');
@@ -75,14 +77,11 @@ export default function ArtistPage({ artist, up, down, score }) {
     });
 
     const data = await res.json();
-    if (!res.ok) {
-      setErrorMsg(data.error || 'Vote failed');
-    } else {
-      setCounts(data); // live update
-    }
+    if (!res.ok) setErrorMsg(data.error || 'Vote failed');
+    else setCounts(data);
   }
 
-  // upload 1–5 images to "evidence" bucket and return public URLs
+  // upload images to "evidence" bucket
   async function uploadFiles() {
     const urls = [];
     for (const file of files) {
@@ -90,65 +89,42 @@ export default function ArtistPage({ artist, up, down, score }) {
       const { error } = await supabase.storage
         .from('evidence')
         .upload(filename, file);
-
       if (error) throw error;
 
-      const { data } = supabase.storage
-        .from('evidence')
-        .getPublicUrl(filename);
-
+      const { data } = supabase.storage.from('evidence').getPublicUrl(filename);
       urls.push(data.publicUrl);
     }
     return urls;
   }
 
-  // submit accusation
+  // submit accusation (requires 1..5 images)
   async function submitEvidence(e) {
     e.preventDefault();
-    if (!user) {
-      setErrorMsg('Please sign in.');
-      return;
-    }
-
-    // enforce 1–5 images
-    if (files.length < 1) {
-      setErrorMsg('Please attach at least one image.');
-      return;
-    }
-    if (files.length > 5) {
-      setErrorMsg('You can attach up to 5 images max.');
-      return;
-    }
-
-    // text is optional? sure. could enforce min length later if you want
-    // but now we at least have an image requirement.
+    if (!user) return setErrorMsg('Please sign in.');
+    if (files.length < 1) return setErrorMsg('Please attach at least one image.');
+    if (files.length > 5) return setErrorMsg('You can attach up to 5 images max.');
     setLoading(true);
     setErrorMsg('');
 
     try {
-      // upload images first
       const imageUrls = await uploadFiles();
 
-      // insert accusation
       const { error } = await supabase.from('accusations').insert([
         {
           artist_slug: artist.slug,
           accuser_id: user.id,
-          accuser_name: user.email, // <- show email/handle instead of random id
+          accuser_name: user.email, // will show in thread
           text_reason: reason,
           image_urls: imageUrls,
         },
       ]);
 
       if (error) {
-        // If it violates the unique index (same user accusing same artist twice)
-        // Supabase will send a Postgres error like
-        // "duplicate key value violates unique constraint..."
-        if (
-          error.message &&
-          error.message.toLowerCase().includes('duplicate key value')
-        ) {
-          setErrorMsg('You already submitted evidence for this artist.');
+        const msg = (error.message || '').toLowerCase();
+        if (msg.includes('duplicate key value')) {
+          setErrorMsg('You have already submitted evidence for this artist.');
+        } else if (msg.includes('row-level security')) {
+          setErrorMsg('Permission denied by security policy (RLS). Check Supabase policies.');
         } else {
           setErrorMsg(error.message);
         }
@@ -156,14 +132,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         return;
       }
 
-      // reload accusation thread
-      const { data: accs } = await supabase
-        .from('accusations')
-        .select('*')
-        .eq('artist_slug', artist.slug)
-        .order('created_at', { ascending: false });
-
-      setAccusations(accs || []);
+      await loadThread();
       setShowForm(false);
       setReason('');
       setFiles([]);
@@ -174,25 +143,26 @@ export default function ArtistPage({ artist, up, down, score }) {
     }
   }
 
-  // agree / disagree on an accusation
-  async function voteOnAccusation(accId, vote) {
-    if (!user) return setErrorMsg('Sign in first.');
+  // soft-delete own post
+  async function deleteAccusation(accId) {
+    if (!user) return setErrorMsg('Please sign in.');
     setErrorMsg('');
 
-    const { error } = await supabase.from('accusation_votes').upsert(
-      [
-        {
-          accusation_id: accId,
-          voter_id: user.id,
-          vote, // 'agree' or 'disagree'
-        },
-      ],
-      { onConflict: 'accusation_id,voter_id' }
-    );
+    const { error } = await supabase
+      .from('accusations')
+      .update({
+        deleted_at: new Date().toISOString(),
+        deleted_by: user.id,
+        status: 'deleted',
+      })
+      .eq('id', accId)
+      .eq('accuser_id', user.id); // ensure only owner deletes
 
     if (error) {
       setErrorMsg(error.message);
+      return;
     }
+    await loadThread();
   }
 
   return (
@@ -248,7 +218,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         </p>
       )}
 
-      {/* ---------- Voting Buttons ---------- */}
+      {/* voting buttons */}
       <div style={{ display: 'flex', gap: 12, margin: '16px 0' }}>
         <button
           onClick={sendUpvote}
@@ -286,7 +256,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         </button>
       </div>
 
-      {/* ---------- Evidence Form ---------- */}
+      {/* evidence form */}
       {showForm && (
         <form
           onSubmit={submitEvidence}
@@ -338,7 +308,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         <p style={{ color: 'red', fontWeight: 'bold' }}>{errorMsg}</p>
       )}
 
-      {/* ---------- Badge Section ---------- */}
+      {/* badge */}
       <hr style={{ margin: '24px 0' }} />
       <h2>Your PureArt Badge</h2>
       <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.4 }}>
@@ -382,7 +352,7 @@ export default function ArtistPage({ artist, up, down, score }) {
        alt="PureArt Alliance - Human Created Art" />
 </a>`}</pre>
 
-      {/* ---------- Evidence Thread ---------- */}
+      {/* thread */}
       <h2>Evidence Against This Artist</h2>
       {accusations.length === 0 && <p>No evidence submitted yet.</p>}
 
@@ -397,9 +367,20 @@ export default function ArtistPage({ artist, up, down, score }) {
             background: '#fff',
           }}
         >
-          <div style={{ fontSize: 14, opacity: 0.7 }}>
-            Posted by {acc.accuser_name || 'anonymous'} on{' '}
-            {new Date(acc.created_at).toLocaleString()}
+          <div style={{ fontSize: 14, opacity: 0.7, display: 'flex', justifyContent: 'space-between' }}>
+            <span>
+              Posted by {acc.accuser_name || 'anonymous'} on{' '}
+              {new Date(acc.created_at).toLocaleString()}
+            </span>
+            {user?.id === acc.accuser_id && (
+              <button
+                onClick={() => deleteAccusation(acc.id)}
+                style={{ fontSize: 12 }}
+                title="Delete your post (soft delete)"
+              >
+                🗑 Delete
+              </button>
+            )}
           </div>
 
           {acc.text_reason && <p>{acc.text_reason}</p>}
