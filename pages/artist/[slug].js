@@ -31,14 +31,19 @@ export async function getServerSideProps({ params }) {
 // -------------------------
 export default function ArtistPage({ artist, up, down, score }) {
   const [user, setUser] = useState(null);
+
   const [counts, setCounts] = useState({ up, down, score });
+
   const [showForm, setShowForm] = useState(false);
   const [reason, setReason] = useState('');
   const [files, setFiles] = useState([]);
+
   const [accusations, setAccusations] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // load logged-in user + accusations thread
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -54,8 +59,11 @@ export default function ArtistPage({ artist, up, down, score }) {
     })();
   }, [artist.slug]);
 
+  // handle "This artist is genuine" upvote
   async function sendUpvote() {
     if (!user) return setErrorMsg('Please sign in first.');
+    setErrorMsg('');
+
     const res = await fetch('/api/vote', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -65,10 +73,16 @@ export default function ArtistPage({ artist, up, down, score }) {
         voter_id: user.id,
       }),
     });
+
     const data = await res.json();
-    if (res.ok) setCounts(data);
+    if (!res.ok) {
+      setErrorMsg(data.error || 'Vote failed');
+    } else {
+      setCounts(data); // live update
+    }
   }
 
+  // upload 1–5 images to "evidence" bucket and return public URLs
   async function uploadFiles() {
     const urls = [];
     for (const file of files) {
@@ -76,34 +90,73 @@ export default function ArtistPage({ artist, up, down, score }) {
       const { error } = await supabase.storage
         .from('evidence')
         .upload(filename, file);
+
       if (error) throw error;
-      const { data } = supabase.storage.from('evidence').getPublicUrl(filename);
+
+      const { data } = supabase.storage
+        .from('evidence')
+        .getPublicUrl(filename);
+
       urls.push(data.publicUrl);
     }
     return urls;
   }
 
+  // submit accusation
   async function submitEvidence(e) {
     e.preventDefault();
-    if (!user) return setErrorMsg('Please sign in.');
-    if (!reason.trim() && files.length === 0)
-      return setErrorMsg('Please include text or images.');
+    if (!user) {
+      setErrorMsg('Please sign in.');
+      return;
+    }
 
+    // enforce 1–5 images
+    if (files.length < 1) {
+      setErrorMsg('Please attach at least one image.');
+      return;
+    }
+    if (files.length > 5) {
+      setErrorMsg('You can attach up to 5 images max.');
+      return;
+    }
+
+    // text is optional? sure. could enforce min length later if you want
+    // but now we at least have an image requirement.
     setLoading(true);
     setErrorMsg('');
 
     try {
-      const imageUrls = files.length ? await uploadFiles() : [];
+      // upload images first
+      const imageUrls = await uploadFiles();
+
+      // insert accusation
       const { error } = await supabase.from('accusations').insert([
         {
           artist_slug: artist.slug,
           accuser_id: user.id,
+          accuser_name: user.email, // <- show email/handle instead of random id
           text_reason: reason,
           image_urls: imageUrls,
         },
       ]);
-      if (error) throw error;
 
+      if (error) {
+        // If it violates the unique index (same user accusing same artist twice)
+        // Supabase will send a Postgres error like
+        // "duplicate key value violates unique constraint..."
+        if (
+          error.message &&
+          error.message.toLowerCase().includes('duplicate key value')
+        ) {
+          setErrorMsg('You already submitted evidence for this artist.');
+        } else {
+          setErrorMsg(error.message);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // reload accusation thread
       const { data: accs } = await supabase
         .from('accusations')
         .select('*')
@@ -121,19 +174,25 @@ export default function ArtistPage({ artist, up, down, score }) {
     }
   }
 
+  // agree / disagree on an accusation
   async function voteOnAccusation(accId, vote) {
     if (!user) return setErrorMsg('Sign in first.');
+    setErrorMsg('');
+
     const { error } = await supabase.from('accusation_votes').upsert(
       [
         {
           accusation_id: accId,
           voter_id: user.id,
-          vote,
+          vote, // 'agree' or 'disagree'
         },
       ],
       { onConflict: 'accusation_id,voter_id' }
     );
-    if (error) setErrorMsg(error.message);
+
+    if (error) {
+      setErrorMsg(error.message);
+    }
   }
 
   return (
@@ -171,9 +230,11 @@ export default function ArtistPage({ artist, up, down, score }) {
         {artist.display_name}{' '}
         <span style={{ opacity: 0.6 }}>({artist.handle})</span>
       </h1>
+
       <p>
         Status: <b>{artist.status}</b>
       </p>
+
       <p>
         Score: <b>{counts.score}%</b> — 👍 {counts.up} / 👎 {counts.down}
       </p>
@@ -206,7 +267,10 @@ export default function ArtistPage({ artist, up, down, score }) {
         </button>
 
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => {
+            setShowForm(!showForm);
+            setErrorMsg('');
+          }}
           disabled={!user}
           style={{
             background: '#ffeeee',
@@ -222,7 +286,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         </button>
       </div>
 
-      {/* ---------- Evidence Form (moved up) ---------- */}
+      {/* ---------- Evidence Form ---------- */}
       {showForm && (
         <form
           onSubmit={submitEvidence}
@@ -235,30 +299,44 @@ export default function ArtistPage({ artist, up, down, score }) {
           }}
         >
           <h3>Submit evidence of AI use</h3>
+
           <textarea
             style={{ width: '100%', minHeight: 100, marginBottom: 8 }}
             placeholder="Explain why you believe this artist used AI..."
             value={reason}
             onChange={e => setReason(e.target.value)}
           />
+
           <input
             type="file"
             multiple
             accept="image/*"
             onChange={e => setFiles([...e.target.files])}
           />
+          <div style={{ fontSize: '12px', color: '#555', marginTop: '4px' }}>
+            You must attach at least 1 image (max 5).
+          </div>
+
           <div style={{ marginTop: 12 }}>
             <button type="submit" disabled={loading}>
               {loading ? 'Submitting...' : 'Submit evidence'}
             </button>{' '}
-            <button type="button" onClick={() => setShowForm(false)}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setErrorMsg('');
+              }}
+            >
               Cancel
             </button>
           </div>
         </form>
       )}
 
-      {errorMsg && <p style={{ color: 'red' }}>{errorMsg}</p>}
+      {errorMsg && (
+        <p style={{ color: 'red', fontWeight: 'bold' }}>{errorMsg}</p>
+      )}
 
       {/* ---------- Badge Section ---------- */}
       <hr style={{ margin: '24px 0' }} />
@@ -268,6 +346,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         status ever changes (for example, goes under review or is revoked), the
         colour and text here will update everywhere you’ve embedded it.
       </p>
+
       <div
         style={{
           border: '1px solid #ddd',
@@ -283,9 +362,11 @@ export default function ArtistPage({ artist, up, down, score }) {
           style={{ display: 'block', maxWidth: '100%' }}
         />
       </div>
+
       <p style={{ marginTop: '24px', fontWeight: 'bold' }}>
         Copy &amp; paste this HTML anywhere:
       </p>
+
       <pre
         style={{
           background: '#f5f5f5',
@@ -304,6 +385,7 @@ export default function ArtistPage({ artist, up, down, score }) {
       {/* ---------- Evidence Thread ---------- */}
       <h2>Evidence Against This Artist</h2>
       {accusations.length === 0 && <p>No evidence submitted yet.</p>}
+
       {accusations.map(acc => (
         <div
           key={acc.id}
@@ -316,10 +398,12 @@ export default function ArtistPage({ artist, up, down, score }) {
           }}
         >
           <div style={{ fontSize: 14, opacity: 0.7 }}>
-            Posted by {acc.accuser_id.slice(0, 8)}... on{' '}
+            Posted by {acc.accuser_name || 'anonymous'} on{' '}
             {new Date(acc.created_at).toLocaleString()}
           </div>
+
           {acc.text_reason && <p>{acc.text_reason}</p>}
+
           {acc.image_urls?.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {acc.image_urls.map(url => (
@@ -335,6 +419,7 @@ export default function ArtistPage({ artist, up, down, score }) {
               ))}
             </div>
           )}
+
           <div style={{ marginTop: 8 }}>
             <button onClick={() => voteOnAccusation(acc.id, 'agree')}>
               👍 Agree
