@@ -41,6 +41,10 @@ export default function ArtistPage({ artist, up, down, score }) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // delete reason prompt state
+  const [deleteOpenId, setDeleteOpenId] = useState(null);
+  const [deleteReason, setDeleteReason] = useState('');
+
   // load user + accusations (excluding soft-deleted)
   async function loadThread() {
     const { data: accs } = await supabase
@@ -113,7 +117,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         {
           artist_slug: artist.slug,
           accuser_id: user.id,
-          accuser_name: user.email, // will show in thread (swap to profile name later)
+          accuser_name: user.email, // will show in thread
           text_reason: reason,
           image_urls: imageUrls,
         },
@@ -143,9 +147,13 @@ export default function ArtistPage({ artist, up, down, score }) {
     }
   }
 
-  // soft-delete own post
-  async function deleteAccusation(accId) {
+  // soft-delete own post with a reason
+  async function deleteAccusation(accId, reasonText) {
     if (!user) return setErrorMsg('Please sign in.');
+    if (!reasonText || reasonText.trim().length < 3) {
+      setErrorMsg('Please provide a short reason for removing your evidence.');
+      return;
+    }
     setErrorMsg('');
 
     const { error } = await supabase
@@ -154,6 +162,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         deleted_at: new Date().toISOString(),
         deleted_by: user.id,
         status: 'deleted',
+        deleted_reason: reasonText.trim(),
       })
       .eq('id', accId)
       .eq('accuser_id', user.id); // ensure only owner deletes
@@ -162,7 +171,19 @@ export default function ArtistPage({ artist, up, down, score }) {
       setErrorMsg(error.message);
       return;
     }
+    setDeleteOpenId(null);
+    setDeleteReason('');
     await loadThread();
+  }
+
+  // agree/disagree
+  async function voteOnAccusation(accId, vote) {
+    if (!user) return setErrorMsg('Sign in first.');
+    const { error } = await supabase.from('accusation_votes').upsert(
+      [{ accusation_id: accId, voter_id: user.id, vote }],
+      { onConflict: 'accusation_id,voter_id' }
+    );
+    if (error) setErrorMsg(error.message);
   }
 
   return (
@@ -373,13 +394,20 @@ export default function ArtistPage({ artist, up, down, score }) {
               {new Date(acc.created_at).toLocaleString()}
             </span>
             {user?.id === acc.accuser_id && (
-              <button
-                onClick={() => deleteAccusation(acc.id)}
-                style={{ fontSize: 12 }}
-                title="Delete your post (soft delete)"
-              >
-                🗑 Delete
-              </button>
+              deleteOpenId === acc.id ? (
+                <span style={{ fontSize: 12, color: '#900' }}>Deleting…</span>
+              ) : (
+                <button
+                  onClick={() => {
+                    setDeleteOpenId(acc.id);
+                    setDeleteReason('');
+                  }}
+                  style={{ fontSize: 12 }}
+                  title="Delete your post (soft delete)"
+                >
+                  🗑 Delete
+                </button>
+              )
             )}
           </div>
 
@@ -398,6 +426,45 @@ export default function ArtistPage({ artist, up, down, score }) {
                   }}
                 />
               ))}
+            </div>
+          )}
+
+          {/* Delete reason inline prompt (only for your own post) */}
+          {user?.id === acc.accuser_id && deleteOpenId === acc.id && (
+            <div
+              style={{
+                border: '1px solid #f0caca',
+                background: '#fff4f4',
+                padding: 12,
+                borderRadius: 8,
+                marginTop: 10,
+              }}
+            >
+              <div style={{ fontWeight: 'bold', marginBottom: 6 }}>
+                Why have you chosen to remove your downvote/evidence?
+              </div>
+              <textarea
+                style={{ width: '100%', minHeight: 80, marginBottom: 8 }}
+                placeholder="Your reason (required)"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+              />
+              <div>
+                <button
+                  onClick={() => deleteAccusation(acc.id, deleteReason)}
+                  style={{ marginRight: 8 }}
+                >
+                  Submit reason & delete
+                </button>
+                <button
+                  onClick={() => {
+                    setDeleteOpenId(null);
+                    setDeleteReason('');
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
 
