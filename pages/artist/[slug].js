@@ -113,7 +113,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         {
           artist_slug: artist.slug,
           accuser_id: user.id,
-          accuser_name: user.email, // will show in thread
+          accuser_name: user.email, // will show in thread (swap to profile name later)
           text_reason: reason,
           image_urls: imageUrls,
         },
