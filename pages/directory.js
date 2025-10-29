@@ -2,28 +2,70 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-// This runs on the server when someone loads /directory.
-// It gets the list of artists from the database so we can show them.
+// We are going to fetch:
+// - all artists
+// - all votes
+// Then we combine them on the server to compute up/down/score per artist.
 export async function getServerSideProps() {
-  const { data: artists, error } = await supabase
+  // 1. Get artist list
+  const { data: artistsRaw, error: artistError } = await supabase
     .from('artists')
-    .select('display_name, handle, slug, status, up_weighted, down_weighted')
+    .select('display_name, handle, slug, status')
     .order('display_name', { ascending: true });
 
-  if (error) {
-    console.error(error);
+  if (artistError || !artistsRaw) {
+    console.error(artistError);
     return { props: { artists: [] } };
   }
+
+  // 2. Get all votes for all artists
+  const { data: votesRaw, error: votesError } = await supabase
+    .from('votes')
+    .select('artist_slug, vote');
+
+  if (votesError) {
+    console.error(votesError);
+    // still return artists list, just with 0s
+    const artistsWithZeros = artistsRaw.map(a => ({
+      ...a,
+      up: 0,
+      down: 0,
+      score: 100,
+    }));
+    return { props: { artists: artistsWithZeros } };
+  }
+
+  // 3. Build a map: slug -> { up, down }
+  const tallyMap = {};
+  for (const row of votesRaw) {
+    if (!tallyMap[row.artist_slug]) {
+      tallyMap[row.artist_slug] = { up: 0, down: 0 };
+    }
+    if (row.vote === 'up') tallyMap[row.artist_slug].up += 1;
+    if (row.vote === 'down') tallyMap[row.artist_slug].down += 1;
+  }
+
+  // 4. Merge tallies into artists list
+  const artists = artistsRaw.map(a => {
+    const up = tallyMap[a.slug]?.up || 0;
+    const down = tallyMap[a.slug]?.down || 0;
+    const total = up + down;
+    const score = total ? Math.round((up / total) * 100) : 100;
+    return {
+      ...a,
+      up,
+      down,
+      score,
+    };
+  });
 
   return { props: { artists } };
 }
 
-// This runs in the browser. It shows the page.
 export default function Directory({ artists }) {
-  // We'll store the logged-in user's email here (if any)
+  // We'll still show login status so you know if you're signed in.
   const [userEmail, setUserEmail] = useState(null);
 
-  // When the page loads in the browser, ask Supabase "who is logged in?"
   useEffect(() => {
     async function loadUser() {
       const { data } = await supabase.auth.getUser();
@@ -43,7 +85,6 @@ export default function Directory({ artists }) {
         fontFamily: 'system-ui, sans-serif'
       }}
     >
-      {/* Sign-in status box */}
       {userEmail ? (
         <p
           style={{
@@ -71,55 +112,51 @@ export default function Directory({ artists }) {
           }}
         >
           Not signed in.{' '}
-          <a href="/login" style={{ color: '#0066cc' }}>Log in →</a>
+          <a href="/login" style={{ color: '#0066cc' }}>
+            Log in →
+          </a>
         </p>
       )}
 
       <h1>Directory</h1>
 
       <ul style={{ listStyle: 'none', padding: 0 }}>
-        {artists.map(a => {
-          const up = Number(a.up_weighted || 0);
-          const down = Number(a.down_weighted || 0);
-          const total = up + down;
-          const score = total ? Math.round((up / total) * 100) : 100;
-
-          return (
-            <li
-              key={a.slug}
+        {artists.map(a => (
+          <li
+            key={a.slug}
+            style={{
+              margin: '12px 0',
+              padding: '12px',
+              border: '1px solid #ddd',
+              borderRadius: 8
+            }}
+          >
+            <div
               style={{
-                margin: '12px 0',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: 8
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12
-                }}
-              >
+              <div>
+                <strong>{a.display_name}</strong>{' '}
+                <span style={{ opacity: 0.6 }}>({a.handle})</span>
+
                 <div>
-                  <strong>{a.display_name}</strong>{' '}
-                  <span style={{ opacity: 0.6 }}>({a.handle})</span>
-
-                  <div>
-                    Status: <b>{a.status}</b>
-                  </div>
-
-                  <div>
-                    Score: <b>{score}%</b> — 👍 {up} / 👎 {down}
-                  </div>
+                  Status: <b>{a.status}</b>
                 </div>
 
-                <Link href={`/artist/${a.slug}`}>View</Link>
+                <div>
+                  Score:{' '}
+                  <b>{a.score}%</b> — 👍 {a.up} / 👎 {a.down}
+                </div>
               </div>
-            </li>
-          );
-        })}
+
+              <Link href={`/artist/${a.slug}`}>View</Link>
+            </div>
+          </li>
+        ))}
       </ul>
     </main>
   );
