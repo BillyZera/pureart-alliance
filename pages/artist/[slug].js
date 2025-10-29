@@ -187,7 +187,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         </p>
       )}
 
-      {/* prettier voting buttons */}
+      {/* ---------- Voting Buttons ---------- */}
       <div style={{ display: 'flex', gap: 12, margin: '16px 0' }}>
         <button
           onClick={sendUpvote}
@@ -206,7 +206,7 @@ export default function ArtistPage({ artist, up, down, score }) {
         </button>
 
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => setShowForm(!showForm)}
           disabled={!user}
           style={{
             background: '#ffeeee',
@@ -222,9 +222,45 @@ export default function ArtistPage({ artist, up, down, score }) {
         </button>
       </div>
 
+      {/* ---------- Evidence Form (moved up) ---------- */}
+      {showForm && (
+        <form
+          onSubmit={submitEvidence}
+          style={{
+            border: '1px solid #ccc',
+            padding: 16,
+            borderRadius: 8,
+            marginBottom: 24,
+            background: '#fafafa',
+          }}
+        >
+          <h3>Submit evidence of AI use</h3>
+          <textarea
+            style={{ width: '100%', minHeight: 100, marginBottom: 8 }}
+            placeholder="Explain why you believe this artist used AI..."
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+          />
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={e => setFiles([...e.target.files])}
+          />
+          <div style={{ marginTop: 12 }}>
+            <button type="submit" disabled={loading}>
+              {loading ? 'Submitting...' : 'Submit evidence'}
+            </button>{' '}
+            <button type="button" onClick={() => setShowForm(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
       {errorMsg && <p style={{ color: 'red' }}>{errorMsg}</p>}
 
-      {/* ---------- PureArt Badge ---------- */}
+      {/* ---------- Badge Section ---------- */}
       <hr style={{ margin: '24px 0' }} />
       <h2>Your PureArt Badge</h2>
       <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.4 }}>
@@ -264,43 +300,6 @@ export default function ArtistPage({ artist, up, down, score }) {
   <img src="https://pureart-alliance.vercel.app/api/badge/${artist.slug}"
        alt="PureArt Alliance - Human Created Art" />
 </a>`}</pre>
-
-      {/* ---------- Evidence Form ---------- */}
-      {showForm && (
-        <form
-          onSubmit={submitEvidence}
-          style={{
-            border: '1px solid #ccc',
-            padding: 16,
-            borderRadius: 8,
-            marginTop: 24,
-            marginBottom: 24,
-            background: '#fafafa',
-          }}
-        >
-          <h3>Submit evidence of AI use</h3>
-          <textarea
-            style={{ width: '100%', minHeight: 100, marginBottom: 8 }}
-            placeholder="Explain why you believe this artist used AI..."
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-          />
-          <input
-            type="file"
-            multiple
-            accept="image/*"
-            onChange={e => setFiles([...e.target.files])}
-          />
-          <div style={{ marginTop: 12 }}>
-            <button type="submit" disabled={loading}>
-              {loading ? 'Submitting...' : 'Submit evidence'}
-            </button>{' '}
-            <button type="button" onClick={() => setShowForm(false)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
 
       {/* ---------- Evidence Thread ---------- */}
       <h2>Evidence Against This Artist</h2>
