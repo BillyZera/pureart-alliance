@@ -1,286 +1,231 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
-// 1. Get artist data on the server so the page can load even without JS
+// -------------------------
+// SERVER: basic artist + votes
+// -------------------------
 export async function getServerSideProps({ params }) {
-  // Load the artist row
   const { data: artist, error: artistError } = await supabase
     .from('artists')
     .select('display_name, handle, slug, status, website_url')
     .eq('slug', params.slug)
     .single();
 
-  if (artistError || !artist) {
-    return { notFound: true };
-  }
+  if (artistError || !artist) return { notFound: true };
 
-  // Load current votes for this artist
-  const { data: votes, error: votesError } = await supabase
+  // Count votes
+  const { data: votes } = await supabase
     .from('votes')
     .select('vote')
     .eq('artist_slug', params.slug);
 
-  // Gracefully handle if votes table is empty/new
-  const upCount = votes && !votesError
-    ? votes.filter(v => v.vote === 'up').length
-    : 0;
-  const downCount = votes && !votesError
-    ? votes.filter(v => v.vote === 'down').length
-    : 0;
+  const up = votes?.filter(v => v.vote === 'up').length || 0;
+  const down = votes?.filter(v => v.vote === 'down').length || 0;
+  const total = up + down;
+  const score = total ? Math.round((up / total) * 100) : 100;
 
-  const total = upCount + downCount;
-  const initialScore = total ? Math.round((upCount / total) * 100) : 100;
-
-  return {
-    props: {
-      artist,
-      initialUp: upCount,
-      initialDown: downCount,
-      initialScore,
-    },
-  };
+  return { props: { artist, up, down, score } };
 }
 
-// 2. Page component (runs in the browser)
-export default function ArtistPage({ artist, initialUp, initialDown, initialScore }) {
-  const [userEmail, setUserEmail] = useState(null);
-  const [userId, setUserId] = useState(null);
+// -------------------------
+// CLIENT PAGE
+// -------------------------
+export default function ArtistPage({ artist, up, down, score }) {
+  const [user, setUser] = useState(null);
+  const [counts, setCounts] = useState({ up, down, score });
+  const [showForm, setShowForm] = useState(false);
 
-  const [up, setUp] = useState(initialUp);
-  const [down, setDown] = useState(initialDown);
-  const [score, setScore] = useState(initialScore);
-
-  const [working, setWorking] = useState(false);
+  const [reason, setReason] = useState('');
+  const [files, setFiles] = useState([]);
+  const [accusations, setAccusations] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // When page mounts, ask Supabase who is signed in
+  // -------------------------
+  // Load current user + accusations
+  // -------------------------
   useEffect(() => {
-    async function loadUser() {
+    (async () => {
       const { data } = await supabase.auth.getUser();
-      if (data?.user) {
-        setUserEmail(data.user.email || null);
-        setUserId(data.user.id || null);
-      }
-    }
-    loadUser();
-  }, []);
+      if (data?.user) setUser(data.user);
 
-  // Handle clicking 👍 or 👎
-  async function sendVote(voteType) {
-    if (!userId) {
-      setErrorMsg('You must be signed in to vote.');
-      return;
-    }
+      const { data: accs } = await supabase
+        .from('accusations')
+        .select('*')
+        .eq('artist_slug', artist.slug)
+        .order('created_at', { ascending: false });
 
-    setWorking(true);
+      setAccusations(accs || []);
+    })();
+  }, [artist.slug]);
+
+  // -------------------------
+  // Simple upvote
+  // -------------------------
+  async function sendUpvote() {
+    if (!user) return setErrorMsg('Please sign in first.');
+    const res = await fetch('/api/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        artist_slug: artist.slug,
+        vote: 'up',
+        voter_id: user.id,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) setCounts(data);
+  }
+
+  // -------------------------
+  // Handle file uploads to bucket
+  // -------------------------
+  async function uploadFiles() {
+    const urls = [];
+    for (const file of files) {
+      const filename = `${user.id}-${Date.now()}-${file.name}`;
+      const { error } = await supabase.storage
+        .from('evidence')
+        .upload(filename, file);
+
+      if (error) throw error;
+      const { data } = supabase.storage
+        .from('evidence')
+        .getPublicUrl(filename);
+      urls.push(data.publicUrl);
+    }
+    return urls;
+  }
+
+  // -------------------------
+  // Submit evidence form
+  // -------------------------
+  async function submitEvidence(e) {
+    e.preventDefault();
+    if (!user) return setErrorMsg('Please sign in.');
+    if (!reason.trim() && files.length === 0)
+      return setErrorMsg('Please include text or images.');
+
+    setLoading(true);
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/vote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      const imageUrls = files.length ? await uploadFiles() : [];
+
+      const { error } = await supabase.from('accusations').insert([
+        {
           artist_slug: artist.slug,
-          vote: voteType, // 'up' or 'down'
-          voter_id: userId,
-        }),
-      });
+          accuser_id: user.id,
+          text_reason: reason,
+          image_urls: imageUrls,
+        },
+      ]);
 
-      const data = await res.json();
+      if (error) throw error;
 
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Vote failed');
-      } else {
-        // Update UI with fresh numbers from the server response
-        setUp(data.up);
-        setDown(data.down);
-        setScore(data.score);
-      }
+      // Reload list
+      const { data: accs } = await supabase
+        .from('accusations')
+        .select('*')
+        .eq('artist_slug', artist.slug)
+        .order('created_at', { ascending: false });
+
+      setAccusations(accs || []);
+      setShowForm(false);
+      setReason('');
+      setFiles([]);
     } catch (err) {
-      setErrorMsg('Network error');
+      setErrorMsg(err.message);
     } finally {
-      setWorking(false);
+      setLoading(false);
     }
   }
 
+  // -------------------------
+  // Vote on an accusation
+  // -------------------------
+  async function voteOnAccusation(accId, vote) {
+    if (!user) return setErrorMsg('Sign in first.');
+    const { error } = await supabase.from('accusation_votes').upsert(
+      [
+        {
+          accusation_id: accId,
+          voter_id: user.id,
+          vote,
+        },
+      ],
+      { onConflict: 'accusation_id,voter_id' }
+    );
+    if (error) setErrorMsg(error.message);
+  }
+
   return (
-    <main
-      style={{
-        maxWidth: 700,
-        margin: '40px auto',
-        padding: '0 16px',
-        fontFamily: 'system-ui, sans-serif',
-      }}
-    >
-      <p>
-        <a href="/directory">← Back to directory</a>
-      </p>
+    <main style={{ maxWidth: 700, margin: '40px auto', padding: '0 16px' }}>
+      <p><a href="/directory">← Back</a></p>
+      <h1>{artist.display_name} <span style={{opacity:.6}}>({artist.handle})</span></h1>
+      <p>Status: <b>{artist.status}</b></p>
+      <p>Score: <b>{counts.score}%</b> — 👍 {counts.up} / 👎 {counts.down}</p>
 
-      {/* login status box */}
-      {userEmail ? (
-        <p
-          style={{
-            background: '#f5f5f5',
-            border: '1px solid #ddd',
-            padding: '8px 12px',
-            borderRadius: '6px',
-            fontSize: '14px',
-            color: '#333',
-            marginBottom: '16px',
-          }}
-        >
-          Signed in as <b>{userEmail}</b>
-        </p>
-      ) : (
-        <p
-          style={{
-            background: '#fffbea',
-            border: '1px solid #ddd',
-            padding: '8px 12px',
-            borderRadius: '6px',
-            fontSize: '14px',
-            color: '#555',
-            marginBottom: '16px',
-          }}
-        >
-          Not signed in.{' '}
-          <a href="/login" style={{ color: '#0066cc' }}>
-            Log in →
-          </a>
-        </p>
-      )}
-
-      <h1>
-        {artist.display_name}{' '}
-        <span style={{ opacity: 0.6 }}>({artist.handle})</span>
-      </h1>
-
-      <p>
-        Status: <b>{artist.status}</b>
-      </p>
-
-      <p>
-        Score: <b>{score}%</b> — 👍 {up} / 👎 {down}
-      </p>
-
-      {artist.website_url && (
-        <p>
-          Website:{' '}
-          <a
-            href={artist.website_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {artist.website_url}
-          </a>
-        </p>
-      )}
-
-      {/* voting buttons */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '12px',
-          marginTop: '16px',
-          marginBottom: '16px',
-        }}
-      >
-        <button
-          onClick={() => sendVote('up')}
-          disabled={working || !userId}
-          style={{
-            padding: '10px 14px',
-            borderRadius: '6px',
-            border: '1px solid #0a0',
-            background: '#eaffea',
-            cursor: working || !userId ? 'not-allowed' : 'pointer',
-            fontWeight: 'bold',
-          }}
-        >
-          👍 This artist is genuine
-        </button>
-
-        <button
-          onClick={() => sendVote('down')}
-          disabled={working || !userId}
-          style={{
-            padding: '10px 14px',
-            borderRadius: '6px',
-            border: '1px solid #a00',
-            background: '#ffeeee',
-            cursor: working || !userId ? 'not-allowed' : 'pointer',
-            fontWeight: 'bold',
-          }}
-        >
-          👎 I suspect AI here
-        </button>
+      {/* ---------- Voting Buttons ---------- */}
+      <div style={{display:'flex', gap:12, margin:'16px 0'}}>
+        <button onClick={sendUpvote} disabled={!user}>👍 Genuine</button>
+        <button onClick={() => setShowForm(true)} disabled={!user}>👎 Submit Evidence</button>
       </div>
 
-      {errorMsg && (
-        <p style={{ color: 'red', fontWeight: 'bold' }}>{errorMsg}</p>
+      {errorMsg && <p style={{color:'red'}}>{errorMsg}</p>}
+
+      {/* ---------- Evidence Form ---------- */}
+      {showForm && (
+        <form onSubmit={submitEvidence}
+          style={{border:'1px solid #ccc', padding:16, borderRadius:8, marginBottom:24}}>
+          <h3>Submit evidence of AI use</h3>
+          <textarea
+            style={{width:'100%', minHeight:100, marginBottom:8}}
+            placeholder="Explain why you believe this artist used AI..."
+            value={reason}
+            onChange={e=>setReason(e.target.value)}
+          />
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={e=>setFiles([...e.target.files])}
+          />
+          <div style={{marginTop:12}}>
+            <button type="submit" disabled={loading}>
+              {loading ? 'Submitting...' : 'Submit evidence'}
+            </button>{' '}
+            <button type="button" onClick={()=>setShowForm(false)}>Cancel</button>
+          </div>
+        </form>
       )}
 
-      <hr style={{ margin: '24px 0' }} />
+      {/* ---------- Evidence Thread ---------- */}
+      <h2>Evidence Against This Artist</h2>
+      {accusations.length === 0 && <p>No evidence submitted yet.</p>}
 
-      <h2>Your PureArt Badge</h2>
-      <p
-        style={{
-          fontSize: '14px',
-          color: '#555',
-          lineHeight: 1.4,
-        }}
-      >
-        This live badge shows your current status in PureArt Alliance.
-        If your status ever changes (for example, goes under review or is revoked),
-        the colour and text here will update everywhere you’ve embedded it.
-      </p>
-
-      <div
-        style={{
-          border: '1px solid #ddd',
-          borderRadius: '8px',
-          padding: '16px',
-          display: 'inline-block',
-          background: '#fff',
-        }}
-      >
-        <img
-          src={`/api/badge/${artist.slug}`}
-          alt="PureArt Alliance badge"
-          style={{ display: 'block', maxWidth: '100%' }}
-        />
-      </div>
-
-      <p style={{ marginTop: '24px', fontWeight: 'bold' }}>
-        Copy &amp; paste this HTML anywhere:
-      </p>
-
-      <pre
-        style={{
-          background: '#f5f5f5',
-          padding: '12px',
-          borderRadius: '8px',
-          overflowX: 'auto',
-          fontSize: '13px',
-          lineHeight: 1.4,
-          border: '1px solid #ddd',
-        }}
-      >{`<a href="https://pureart-alliance.vercel.app/artist/${artist.slug}" target="_blank" rel="noopener">
-  <img src="https://pureart-alliance.vercel.app/api/badge/${artist.slug}"
-       alt="PureArt Alliance - Human Created Art" />
-</a>`}</pre>
-
-      <p
-        style={{
-          fontSize: '13px',
-          color: '#777',
-          marginTop: '8px',
-        }}
-      >
-        Tip: paste that into your website, portfolio, bio, Linktree, etc.
-      </p>
+      {accusations.map(acc => (
+        <div key={acc.id}
+          style={{border:'1px solid #ddd', borderRadius:8, padding:12, margin:'12px 0'}}>
+          <div style={{fontSize:14, opacity:.7}}>
+            Posted by {acc.accuser_id.slice(0,8)}... on{' '}
+            {new Date(acc.created_at).toLocaleString()}
+          </div>
+          {acc.text_reason && <p>{acc.text_reason}</p>}
+          {acc.image_urls?.length > 0 && (
+            <div style={{display:'flex', flexWrap:'wrap', gap:8}}>
+              {acc.image_urls.map(url=>(
+                <img key={url} src={url}
+                  style={{maxWidth:120, borderRadius:4, border:'1px solid #ccc'}}/>
+              ))}
+            </div>
+          )}
+          <div style={{marginTop:8}}>
+            <button onClick={()=>voteOnAccusation(acc.id,'agree')}>👍 Agree</button>{' '}
+            <button onClick={()=>voteOnAccusation(acc.id,'disagree')}>👎 Disagree</button>
+          </div>
+        </div>
+      ))}
     </main>
   );
 }
