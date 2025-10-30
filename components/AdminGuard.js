@@ -1,43 +1,32 @@
 
-// components/AdminGuard.js
+// components/AdminGuard.js — client-side admin allowlist check using plain Supabase JS
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@supabase/supabase-js";
 import { getAdminAllowlist } from "../lib/adminConfig";
 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
 export default function AdminGuard({ children }){
-  const supabase = createClientComponentClient();
   const [state, setState] = useState({ loading:true, allowed:false, reason:"" });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try{
-        const { data: { user } } = await supabase.auth.getUser();
-        if(!user){
-          if(!cancelled) setState({ loading:false, allowed:false, reason:"No Supabase user (not logged in, or cookies not present)" });
-          return;
-        }
-        const email = (user.email||"").toLowerCase();
-
-        // Build-time allowlist (NEXT_PUBLIC_ADMIN_EMAILS) — works on Vercel if set in Project Settings → Environment Variables
-        const allow = new Set(getAdminAllowlist());
-        let allowed = allow.has(email);
-        let reason = allowed ? "" : "Email not in NEXT_PUBLIC_ADMIN_EMAILS";
-
-        if(!allowed){
-          // Fallback to profiles.is_admin
-          const { data: prof, error } = await supabase.from("profiles").select("is_admin, email").eq("id", user.id).single();
-          if(error){ reason = "Could not query profiles table (RLS?)"; }
-          allowed = !!prof?.is_admin;
-          if(allowed) reason = "";
-        }
-
-        if(!cancelled) setState({ loading:false, allowed, reason });
-      }catch(e){
-        if(!cancelled) setState({ loading:false, allowed:false, reason:String(e?.message||e) });
+      const { data: { user } } = await supabase.auth.getUser();
+      if(!user){
+        if(!cancelled) setState({ loading:false, allowed:false, reason:"No Supabase user (not logged in, or cookies not present)" });
+        return;
       }
+      const email = (user.email||"").toLowerCase();
+      const allow = new Set(getAdminAllowlist());
+      const allowed = allow.has(email);
+      const reason = allowed ? "" : "Email not in NEXT_PUBLIC_ADMIN_EMAILS";
+      if(!cancelled) setState({ loading:false, allowed, reason });
     })();
     return () => { cancelled = true; };
   }, []);
