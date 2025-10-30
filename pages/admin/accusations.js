@@ -1,17 +1,20 @@
 
+// pages/admin/accusations.js — query evidence table + show author; works even if anon
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 const AdminGuard = dynamic(() => import("../../components/AdminGuard"), { ssr:false });
 import AdminLayout from "../../components/AdminLayout";
-import Button from "../../components/ui/Button";
-import Card from "../../components/ui/Card";
-import Badge from "../../components/ui/Badge";
-import Input from "../../components/ui/Input";
-import Textarea from "../../components/ui/Textarea";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+// EDIT THIS if your evidence table has a different name:
+const EVIDENCE_TABLE = "accusations"; // ← change to your real table name if different
 
 export default function AdminAccusations(){
-  const supabase = createClientComponentClient();
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
   const [showDeleted, setShowDeleted] = useState(true);
@@ -21,11 +24,10 @@ export default function AdminAccusations(){
 
   const fetchRows = async () => {
     setLoading(true);
-    let query = supabase
-      .from("accusations")
-      .select("id, created_at, artist_slug, accuser_id, accuser_name, text, evidence_url, deleted_at, deleted_by, deleted_reason")
+    const { data, error } = await supabase
+      .from(EVIDENCE_TABLE)
+      .select("id, created_at, artist_slug, user_id, user_email, user_name, text, evidence_url, deleted_at, deleted_by, deleted_reason")
       .order("created_at", { ascending:false });
-    const { data, error } = await query;
     if(!error) setRows(data||[]);
     setLoading(false);
   };
@@ -37,20 +39,28 @@ export default function AdminAccusations(){
     return (rows||[]).filter(r => {
       if(!showDeleted && r.deleted_at) return false;
       if(!needle) return true;
-      return [r.artist_slug, r.accuser_name, r.text].some(s => (s||"").toLowerCase().includes(needle));
+      return [r.artist_slug, r.user_email, r.user_name, r.text].some(s => (s||"").toLowerCase().includes(needle));
     });
   }, [rows, q, showDeleted]);
 
-  const restoreAccusation = async (id) => {
-    const { error } = await supabase
-      .from("accusations")
+  const displayName = (r) => r.user_name || r.user_email || r.user_id || "anonymous";
+
+  const restoreRow = async (id) => {
+    const { error } = await supabase.from(EVIDENCE_TABLE)
       .update({ deleted_at: null, deleted_by: null, deleted_reason: null })
       .eq("id", id);
     if(!error) fetchRows();
   };
 
-  const hardDeleteAccusation = async (id) => {
-    const { error } = await supabase.from("accusations").delete().eq("id", id);
+  const softDeleteRow = async (id, reason) => {
+    const { error } = await supabase.from(EVIDENCE_TABLE)
+      .update({ deleted_at: new Date().toISOString(), deleted_reason: reason })
+      .eq("id", id);
+    if(!error) fetchRows();
+  };
+
+  const hardDeleteRow = async (id) => {
+    const { error } = await supabase.from(EVIDENCE_TABLE).delete().eq("id", id);
     if(!error) fetchRows();
   };
 
@@ -59,88 +69,69 @@ export default function AdminAccusations(){
       <AdminLayout active="accusations">
         <h1 className="page-title mb-4">Accusations</h1>
 
-        <Card className="p-4 mb-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <Input placeholder="Filter by artist, name, or text…" value={q} onChange={e=>setQ(e.target.value)} />
-            </div>
-            <label className="inline-flex items-center gap-2 text-sm text-paa-700">
+        <div style={{ border:"1px solid #ececf3", background:"#fff", borderRadius:"16px", padding:"12px", marginBottom:"16px" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"12px" }}>
+            <input placeholder="Filter by artist, name, or text…" value={q} onChange={e=>setQ(e.target.value)}
+              style={{ border:"1px solid #d9dbe8", borderRadius:"10px", padding:"8px 10px", fontSize:"14px" }}
+            />
+            <label style={{ display:"flex", alignItems:"center", gap:"8px", fontSize:"14px", color:"#6a6f85" }}>
               <input type="checkbox" checked={showDeleted} onChange={e=>setShowDeleted(e.target.checked)} />
               Show deleted
             </label>
           </div>
-        </Card>
+        </div>
 
         <div className="space-y-3">
           {loading && <div className="p-6">Loading…</div>}
-          {!loading && filtered.length===0 && <div className="p-6 text-sm text-paa-700">No results.</div>}
+          {!loading && filtered.length===0 && <div className="p-6 text-sm" style={{ color:"#6a6f85" }}>No results.</div>}
           {filtered.map(row => (
-            <Card key={row.id} className="p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{row.artist_slug}</span>
-                    {row.deleted_at ? <Badge color="red">Deleted</Badge> : <Badge color="green">Active</Badge>}
+            <div key={row.id} style={{ border:"1px solid #ececf3", background:"#fff", borderRadius:"16px", padding:"12px", marginBottom:"12px", boxShadow:"0 1px 2px rgba(0,0,0,.05)" }}>
+              <div style={{ display:"flex", alignItems:"start", justifyContent:"space-between", gap:"12px" }}>
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"4px" }}>
+                    <strong>{row.artist_slug}</strong>
+                    <span style={{ fontSize:"12px", padding:"2px 8px", borderRadius:"999px", background: row.deleted_at ? "#ffe4e6" : "#e7f8ee", color: row.deleted_at ? "#b42318" : "#067647" }}>
+                      {row.deleted_at ? "Deleted" : "Active"}
+                    </span>
                   </div>
-                  <div className="muted">By {row.accuser_name || row.accuser_id} · {new Date(row.created_at).toLocaleString()}</div>
-                  <p className={row.deleted_at ? "line-through text-paa-600" : ""}>{row.text}</p>
+                  <div style={{ fontSize:"12px", color:"#6a6f85", marginBottom:"6px" }}>
+                    By {displayName(row)} · {new Date(row.created_at).toLocaleString()}
+                  </div>
+                  <p style={{ margin:0, color: row.deleted_at ? "#9aa0b3" : "#161827", textDecoration: row.deleted_at ? "line-through" : "none" }}>{row.text}</p>
                   {row.evidence_url && (
-                    <a href={row.evidence_url} target="_blank" rel="noreferrer" className="text-sm text-paa-600 underline">
-                      View evidence
-                    </a>
+                    <div style={{ marginTop:"6px" }}>
+                      <a href={row.evidence_url} target="_blank" rel="noreferrer" style={{ fontSize:"12px", color:"#5b5bd6" }}>
+                        View evidence
+                      </a>
+                    </div>
                   )}
                   {row.deleted_reason && (
-                    <div className="text-xs text-paa-600 mt-1">
-                      <span className="font-semibold">Deleted reason:</span> {row.deleted_reason}
+                    <div style={{ fontSize:"12px", color:"#6a6f85", marginTop:"6px" }}>
+                      <strong>Deleted reason:</strong> {row.deleted_reason}
                     </div>
                   )}
                 </div>
-                <div className="flex flex-col gap-2 min-w-[220px]">
+
+                <div style={{ display:"flex", flexDirection:"column", gap:"8px", minWidth:"220px" }}>
                   {!row.deleted_at ? (
                     <>
-                      <Button variant="outline" onClick={()=>{ setActId(row.id); setActReason(""); }}>
-                        Soft delete (add reason)
-                      </Button>
-                      <Button variant="danger" onClick={()=>hardDeleteAccusation(row.id)}>
-                        Hard delete
-                      </Button>
+                      <button onClick={()=>{
+                        const r = prompt("Reason for soft delete? (visible to admins)");
+                        if(r!=null) softDeleteRow(row.id, r);
+                      }} style={{ padding:"8px 10px", borderRadius:"10px", border:"1px solid #d9dbe8", background:"#fff", cursor:"pointer" }}>Soft delete (add reason)</button>
+                      <button onClick={()=>{ if(confirm("Hard delete permanently?")) hardDeleteRow(row.id); }} style={{ padding:"8px 10px", borderRadius:"10px", background:"#d92d20", color:"#fff", border:"none", cursor:"pointer" }}>Hard delete</button>
                     </>
                   ) : (
                     <>
-                      <Button variant="primary" onClick={()=>restoreAccusation(row.id)}>
-                        Restore
-                      </Button>
-                      <Button variant="danger" onClick={()=>hardDeleteAccusation(row.id)}>
-                        Hard delete
-                      </Button>
+                      <button onClick={()=>restoreRow(row.id)} style={{ padding:"8px 10px", borderRadius:"10px", background:"#5b5bd6", color:"#fff", border:"none", cursor:"pointer" }}>Restore</button>
+                      <button onClick={()=>{ if(confirm("Hard delete permanently?")) hardDeleteRow(row.id); }} style={{ padding:"8px 10px", borderRadius:"10px", background:"#d92d20", color:"#fff", border:"none", cursor:"pointer" }}>Hard delete</button>
                     </>
                   )}
                 </div>
               </div>
-            </Card>
+            </div>
           ))}
         </div>
-
-        {actId && (
-          <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4">
-            <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl">
-              <h2 className="font-semibold mb-2">Soft delete accusation</h2>
-              <p className="muted mb-3">Add an internal reason (visible to admins).</p>
-              <Textarea rows={4} value={actReason} onChange={e=>setActReason(e.target.value)} placeholder="Reason…" />
-              <div className="mt-3 flex justify-end gap-2">
-                <Button variant="outline" onClick={()=>{ setActId(null); setActReason(""); }}>Cancel</Button>
-                <Button variant="danger" onClick={async ()=>{
-                  const { error } = await supabase
-                    .from("accusations")
-                    .update({ deleted_at: new Date().toISOString(), deleted_reason: actReason })
-                    .eq("id", actId);
-                  setActId(null); setActReason("");
-                  if(!error) fetchRows();
-                }}>Confirm</Button>
-              </div>
-            </div>
-          </div>
-        )}
       </AdminLayout>
     </AdminGuard>
   );

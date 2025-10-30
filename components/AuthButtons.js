@@ -1,15 +1,25 @@
 
-// components/AuthButtons.js — Magic-link Sign in / Sign out using plain Supabase JS
+// components/AuthButtons.js — always in header; magic-link auth; sign-out button
 "use client";
 
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
-import Button from "./ui/Button";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
+
+const btn = (variant="primary") => ({
+  borderRadius:"10px",
+  padding:"8px 12px",
+  fontSize:"12px",
+  fontWeight:600,
+  border: variant==="outline" ? "1px solid #d9dbe8" : "none",
+  color: variant==="outline" ? "#161827" : "#fff",
+  background: variant==="outline" ? "#fff" : "#5b5bd6",
+  cursor:"pointer"
+});
 
 export default function AuthButtons(){
   const [user, setUser] = useState(null);
@@ -25,7 +35,7 @@ export default function AuthButtons(){
 
   if(!user){
     return (
-      <form className="flex items-center gap-2" onSubmit={async (e)=>{
+      <form style={{ display:"flex", gap:"8px", alignItems:"center" }} onSubmit={async (e)=>{
         e.preventDefault();
         if(!email) return;
         const { error } = await supabase.auth.signInWithOtp({
@@ -35,25 +45,21 @@ export default function AuthButtons(){
         if(error) alert(error.message);
         else alert("Check your email for a sign-in link.");
       }}>
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e)=>setEmail(e.target.value)}
-          className="rounded-xl border px-3 py-2 text-sm"
+        <input type="email" required placeholder="you@example.com"
+          value={email} onChange={(e)=>setEmail(e.target.value)}
+          style={{ border:"1px solid #d9dbe8", borderRadius:"10px", padding:"8px 10px", fontSize:"12px" }}
         />
-        <Button size="sm" type="submit">Sign in</Button>
+        <button type="submit" style={btn("primary")}>Sign in</button>
       </form>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-paa-700">{user.email}</span>
-      <Button size="sm" variant="outline" onClick={async ()=>{ await supabase.auth.signOut(); location.reload(); }}>
+    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+      <span style={{ fontSize:"12px", color:"#6a6f85" }}>{user.email}</span>
+      <button style={btn("outline")} onClick={async ()=>{ await supabase.auth.signOut(); location.reload(); }}>
         Sign out
-      </Button>
+      </button>
     </div>
   );
 }
