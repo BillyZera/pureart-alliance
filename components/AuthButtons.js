@@ -1,7 +1,8 @@
 
-// components/AuthButtons.js — always in header; magic-link auth; sign-out button
+// components/AuthButtons.js — header-only buttons (no email field here)
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -18,12 +19,12 @@ const btn = (variant="primary") => ({
   border: variant==="outline" ? "1px solid #d9dbe8" : "none",
   color: variant==="outline" ? "#161827" : "#fff",
   background: variant==="outline" ? "#fff" : "#5b5bd6",
-  cursor:"pointer"
+  cursor:"pointer",
+  textDecoration:"none"
 });
 
 export default function AuthButtons(){
   const [user, setUser] = useState(null);
-  const [email, setEmail] = useState("");
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data?.user || null));
@@ -34,24 +35,7 @@ export default function AuthButtons(){
   }, []);
 
   if(!user){
-    return (
-      <form style={{ display:"flex", gap:"8px", alignItems:"center" }} onSubmit={async (e)=>{
-        e.preventDefault();
-        if(!email) return;
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined }
-        });
-        if(error) alert(error.message);
-        else alert("Check your email for a sign-in link.");
-      }}>
-        <input type="email" required placeholder="you@example.com"
-          value={email} onChange={(e)=>setEmail(e.target.value)}
-          style={{ border:"1px solid #d9dbe8", borderRadius:"10px", padding:"8px 10px", fontSize:"12px" }}
-        />
-        <button type="submit" style={btn("primary")}>Sign in</button>
-      </form>
-    );
+    return <Link href="/login" style={btn("primary")}>Sign in</Link>;
   }
 
   return (
