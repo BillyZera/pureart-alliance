@@ -1,47 +1,71 @@
-@layer base {
-  :root{
-    --paa-25: 250 240 255;
-    --paa-50: 245 235 255;
-    --paa-100: 232 222 255;
-    --paa-200: 210 200 250;
-    --paa-300: 186 176 242;
-    --paa-400: 159 149 232;
-    --paa-500: 130 120 220;
-    --paa-600: 107 96 212;
-    --paa-700: 86 78 180;
-    --paa-800: 66 60 140;
-    --paa-900: 28 26 50;
-  }
-  .text-shadow-sm { text-shadow: 0 1px 0 rgba(0,0,0,.04); }
+
+/* Pure CSS theme (no Tailwind directives) */
+/* Place this file's contents into: styles/paa-theme.css */
+
+:root{
+  --paa-25: 250 240 255;
+  --paa-50: 245 235 255;
+  --paa-100: 232 222 255;
+  --paa-200: 210 200 250;
+  --paa-300: 186 176 242;
+  --paa-400: 159 149 232;
+  --paa-500: 130 120 220;
+  --paa-600: 107 96 212;
+  --paa-700: 86 78 180;
+  --paa-800: 66 60 140;
+  --paa-900: 28 26 50;
 }
 
-@layer utilities {
-  .bg-paa-25  { background-color: rgb(var(--paa-25)); }
-  .bg-paa-50  { background-color: rgb(var(--paa-50)); }
-  .bg-paa-100 { background-color: rgb(var(--paa-100)); }
-  .bg-paa-200 { background-color: rgb(var(--paa-200)); }
-  .bg-paa-300 { background-color: rgb(var(--paa-300)); }
-  .bg-paa-400 { background-color: rgb(var(--paa-400)); }
-  .bg-paa-500 { background-color: rgb(var(--paa-500)); }
-  .bg-paa-600 { background-color: rgb(var(--paa-600)); }
-  .bg-paa-700 { background-color: rgb(var(--paa-700)); }
-  .bg-paa-800 { background-color: rgb(var(--paa-800)); }
-  .text-paa-900 { color: rgb(var(--paa-900)); }
-  .text-paa-700 { color: rgb(var(--paa-700)); }
-  .text-paa-600 { color: rgb(var(--paa-600)); }
-  .ring-paa-100 { --tw-ring-color: rgb(var(--paa-100)); }
-  .ring-paa-200 { --tw-ring-color: rgb(var(--paa-200)); }
-  .border-paa-100 { border-color: rgb(var(--paa-100)); }
-  .border-paa-200 { border-color: rgb(var(--paa-200)); }
-  .border-paa-300 { border-color: rgb(var(--paa-300)); }
-  .bg-grid {
-    background-image: radial-gradient(circle at 1px 1px, rgba(0,0,0,.06) 1px, transparent 0);
-    background-size: 20px 20px;
-  }
+/* ----- Basic text helpers (replacing prior @apply) ----- */
+.page-title{
+  font-size: 1.5rem;       /* text-2xl */
+  line-height: 2rem;
+  font-weight: 800;        /* font-extrabold */
+  letter-spacing: -0.025em;/* tracking-tight */
+  color: rgb(var(--paa-900));
+  margin: 0;
 }
 
-@layer components {
-  .page-title { @apply text-2xl font-extrabold tracking-tight text-paa-900; }
-  .muted { @apply text-sm text-paa-600; }
-  .card { @apply rounded-2xl bg-white ring-1 ring-paa-100 shadow-sm; }
+.muted{
+  font-size: .875rem;      /* text-sm */
+  line-height: 1.25rem;
+  color: rgb(var(--paa-600));
+}
+
+/* Card shell */
+.card{
+  border-radius: 1rem;     /* rounded-2xl */
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  outline: 1px solid rgba(var(--paa-100), 1);
+}
+
+/* ----- Utility-like classes mapped to CSS vars ----- */
+.bg-paa-25  { background-color: rgb(var(--paa-25)); }
+.bg-paa-50  { background-color: rgb(var(--paa-50)); }
+.bg-paa-100 { background-color: rgb(var(--paa-100)); }
+.bg-paa-200 { background-color: rgb(var(--paa-200)); }
+.bg-paa-300 { background-color: rgb(var(--paa-300)); }
+.bg-paa-400 { background-color: rgb(var(--paa-400)); }
+.bg-paa-500 { background-color: rgb(var(--paa-500)); }
+.bg-paa-600 { background-color: rgb(var(--paa-600)); }
+.bg-paa-700 { background-color: rgb(var(--paa-700)); }
+.bg-paa-800 { background-color: rgb(var(--paa-800)); }
+
+.text-paa-900 { color: rgb(var(--paa-900)); }
+.text-paa-700 { color: rgb(var(--paa-700)); }
+.text-paa-600 { color: rgb(var(--paa-600)); }
+
+/* "ring" and "border" utility stand-ins */
+.ring-paa-100 { box-shadow: 0 0 0 1px rgba(var(--paa-100), 1); }
+.ring-paa-200 { box-shadow: 0 0 0 1px rgba(var(--paa-200), 1); }
+
+.border-paa-100 { border-color: rgb(var(--paa-100)); }
+.border-paa-200 { border-color: rgb(var(--paa-200)); }
+.border-paa-300 { border-color: rgb(var(--paa-300)); }
+
+/* Subtle background grid helper */
+.bg-grid {
+  background-image: radial-gradient(circle at 1px 1px, rgba(0,0,0,.06) 1px, transparent 0);
+  background-size: 20px 20px;
 }
