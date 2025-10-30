@@ -1,11 +1,18 @@
 
-// pages/_app.js — wraps every page in the sitewide AppLayout so the new design shows up everywhere.
+// pages/_app.js — session provider + global layout (modern look)
+import { useState } from "react";
 import "../styles/globals.css";
 import "../styles/paa-theme.css";
 import AppLayout from "../components/AppLayout";
+import { SessionContextProvider, createBrowserSupabaseClient } from "@supabase/auth-helpers-react";
 
 export default function MyApp({ Component, pageProps }) {
-  // If a page defines its own getLayout, we respect it. Otherwise wrap with AppLayout.
+  const [supabase] = useState(() => createBrowserSupabaseClient());
   const getLayout = Component.getLayout || ((page) => <AppLayout>{page}</AppLayout>);
-  return getLayout(<Component {...pageProps} />);
+
+  return (
+    <SessionContextProvider supabaseClient={supabase} initialSession={pageProps.initialSession}>
+      {getLayout(<Component {...pageProps} />)}
+    </SessionContextProvider>
+  );
 }
